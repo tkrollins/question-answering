@@ -4,6 +4,8 @@ import numpy as np
 with open("../../data/raw/train-v2.0.json") as data:
     squad = json.load(data)['data']
 
+sent_data = np.load("../../data/interim/article_data.npy", allow_pickle=True)
+
 paragraphs = []
 questions = []
 contexts = []
@@ -17,6 +19,12 @@ for article in squad:
 paragraphs = np.array(paragraphs)
 questions = np.array(questions)
 contexts = np.array(contexts)
+
+sentences = []
+
+for article in sent_data:
+    for paragraph in article:
+        sentences.append(len(paragraph['sents']))
 
 print('Paragraphs Per Article')
 print(f'MAX: {np.max(paragraphs)}')
@@ -34,4 +42,10 @@ print('Paragraph Character Length')
 print(f'MAX: {np.max(contexts)}')
 print(f'MIN: {np.min(contexts)}')
 print(f'MEAN: {np.mean(contexts)}')
-print(f'STD: {np.std(contexts)}')
+print(f'STD: {np.std(contexts)}\n')
+
+print('Sentences Per Paragraph')
+print(f'MAX: {np.max(sentences)}')
+print(f'MIN: {np.min(sentences)}')
+print(f'MEAN: {np.mean(sentences)}')
+print(f'STD: {np.std(sentences)}')
