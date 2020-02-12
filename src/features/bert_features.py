@@ -1,31 +1,38 @@
 import tensorflow as tf
-from tokenization import FullTokenizer
+# from tokenization import FullTokenizer
+import bert
 import tensorflow_hub as hub
 import numpy as np
+import os
+
 
 def create_bert(bert_path, max_seq_length=128):
     input_word_ids = tf.keras.layers.Input(shape=(max_seq_length,), dtype=tf.int32,
-                                        name="input_word_ids")
+                                           name="input_word_ids")
     input_mask = tf.keras.layers.Input(shape=(max_seq_length,), dtype=tf.int32,
-                                    name="input_mask")
+                                       name="input_mask")
     segment_ids = tf.keras.layers.Input(shape=(max_seq_length,), dtype=tf.int32,
                                         name="segment_ids")
     bert_layer = hub.KerasLayer(bert_path, trainable=False)
-    pooled_output, sequence_output = bert_layer([input_word_ids, input_mask, segment_ids])
-    bert_embedding_model = tf.keras.models.Model(inputs=[input_word_ids, input_mask, segment_ids], outputs=[pooled_output, sequence_output])
+    pooled_output, sequence_output = bert_layer(
+        [input_word_ids, input_mask, segment_ids])
+    bert_embedding_model = tf.keras.models.Model(
+        inputs=[input_word_ids, input_mask, segment_ids], outputs=[pooled_output, sequence_output])
     return bert_embedding_model
+
 
 def create_tokenizer(bert_path):
     bert_layer = bert_layer = hub.KerasLayer(bert_path, trainable=False)
     vocab_file = bert_layer.resolved_object.vocab_file.asset_path.numpy()
     do_lower_case = bert_layer.resolved_object.do_lower_case.numpy()
-    return FullTokenizer(vocab_file, do_lower_case)
+    return bert.bert_tokenization.FullTokenizer(vocab_file, do_lower_case)
+
 
 def create_bert_input_sentence(sentence, tokenizer, max_seq_length):
     tokens_a = tokenizer.tokenize(sentence)
 
     if len(tokens_a) > max_seq_length - 2:
-        tokens_a = tokens_a[0 : (max_seq_length - 2)]
+        tokens_a = tokens_a[0: (max_seq_length - 2)]
 
     tokens = []
     segment_ids = []
@@ -53,8 +60,8 @@ def create_bert_input_sentence(sentence, tokenizer, max_seq_length):
     assert len(input_mask) == max_seq_length
     assert len(segment_ids) == max_seq_length
 
-    return (np.array(input_ids).astype(np.int32), 
-            np.array(input_mask).astype(np.int32), 
+    return (np.array(input_ids).astype(np.int32),
+            np.array(input_mask).astype(np.int32),
             np.array(segment_ids).astype(np.int32))
 
 
@@ -64,7 +71,8 @@ def create_bert_input_paragraph(paragraph, tokenizer, max_seq_length, max_par_le
     bert_paragraph_segment_ids = []
 
     for sent in paragraph["sents"]:
-        input_ids, input_mask, segment_ids = create_bert_input_sentence(sent, tokenizer, max_seq_length)
+        input_ids, input_mask, segment_ids = create_bert_input_sentence(
+            sent, tokenizer, max_seq_length)
         bert_paragraph_input_ids.append(input_ids)
         bert_paragraph_input_mask.append(input_mask)
         bert_paragraph_segment_ids.append(segment_ids)
@@ -77,19 +85,23 @@ def create_bert_input_paragraph(paragraph, tokenizer, max_seq_length, max_par_le
 def create_bert_input_article(article, tokenizer, max_seq_length=128, max_par_length=32):
     bert_article = []
     for paragraph in article:
-        bert_article.append(create_bert_input_paragraph(paragraph, tokenizer, max_seq_length, max_par_length))
-    
+        bert_article.append(create_bert_input_paragraph(
+            paragraph, tokenizer, max_seq_length, max_par_length))
+
     return bert_article
+
 
 def get_bert_ouput_paragraph(bert_model, paragraph_input):
     paragraph_embeddings, _ = bert_model.predict(paragraph_input[:4])
     assert len(paragraph_embeddings) == len(paragraph_input[0])
     return paragraph_embeddings
 
+
 def get_bert_ouput_article(bert_model, article_input):
     article_embeddings = []
     for i, paragraph in enumerate(article_input):
-        article_embeddings.append(get_bert_ouput_paragraph(bert_model, paragraph))
+        article_embeddings.append(
+            get_bert_ouput_paragraph(bert_model, paragraph))
         print(f'P - {i}')
     assert len(article_input) == len(article_embeddings)
     return np.array(article_embeddings)
@@ -97,18 +109,23 @@ def get_bert_ouput_article(bert_model, article_input):
 
 if __name__ == '__main__':
     # bert_path = "../../data/external/uncased_bert"
-    bert_path = "/Users/tkrollins/OneDrive/Courses/capstone/question-answering/data/external/uncased_bert"
+    # bert_path = "/Users/tkrollins/OneDrive/Courses/capstone/question-answering/data/external/uncased_bert"
+    bert_path = "../../data/external/bert_models"
+    os.environ["TFHUB_CACHE_DIR"] = bert_path
+    bert_url = 'https://tfhub.dev/tensorflow/bert_en_uncased_L-12_H-768_A-12/1'
 
-    bert_model = create_bert(bert_path)
+    bert_model = create_bert(bert_url)
     bert_model.summary()
 
-    tokenizer = create_tokenizer(bert_path)
+    tokenizer = create_tokenizer(bert_url)
 
     # article_data = np.load("../../data/interim/article_data.npy", allow_pickle=True)
-    article_data = np.load("/Users/tkrollins/OneDrive/Courses/capstone/question-answering/data/interim/article_data.npy", allow_pickle=True)
+    article_data = np.load(
+        "/Users/tkrollins/OneDrive/Courses/capstone/question-answering/data/interim/article_data.npy", allow_pickle=True)
 
     for i, article in enumerate(article_data):
         article_input = create_bert_input_article(article, tokenizer)
         article_output = get_bert_ouput_article(bert_model, article_input)
-        np.save(f'../../data/interim/bert_output/raw_article_{i}.npy', article_output)
+        # np.save(
+            # f'../../data/interim/bert_output/raw_article_{i}.npy', article_output)
         print(f'ARTICLE - {i} ####################')
