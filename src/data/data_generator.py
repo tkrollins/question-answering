@@ -122,9 +122,9 @@ class DataGenerator(object):
     def train_test_split(self, test_size=0.25):
         assert test_size > 0 and test_size < 1
         random.shuffle(self.children)
-        train = DataTree(batch_size=self.batch_size, pos_aug=self.aug_rate,
+        train = DataGenerator(batch_size=self.batch_size, pos_aug=self.aug_rate,
                          noise=self.data_noise, shuffle=self.shuffle, neg_rate=self.neg_sample_rate)
-        test = DataTree(batch_size=self.batch_size, pos_aug=self.aug_rate,
+        test = DataGenerator(batch_size=self.batch_size, pos_aug=self.aug_rate,
                         noise=self.data_noise, shuffle=self.shuffle, neg_rate=self.neg_sample_rate)
         test_len = int(test_size * len(self.children))
         train.children = self.children[test_len:]
