@@ -5,6 +5,7 @@ import os
 import re
 import random
 import tensorflow as tf
+import time
 
 
 class Node(object):
@@ -26,9 +27,9 @@ class Node(object):
 class DataGenerator(object):
 
     def __init__(self, fname=None, batch_size=1200, neg_rate=1., pos_aug=0, noise=0., shuffle=True):
-        assert int(pos_aug) > 0
+        assert int(pos_aug) >= 0
         assert noise >= 0 and noise < 1
-        assert neg_rate >= 0 and neg_rate < 1
+        assert neg_rate > 0 and neg_rate <= 1
         assert int(batch_size) > 0
         assert type(shuffle) == bool
 
@@ -39,6 +40,7 @@ class DataGenerator(object):
         self.aug_rate = int(pos_aug)
         self.neg_sample_rate = neg_rate
         self.end_epoch = False
+        self.count = 0
         random.seed()
 
         if fname is not None:
@@ -82,20 +84,24 @@ class DataGenerator(object):
         random.shuffle(par_list)
         par_list = par_list[:num_false_par]
         par_list.append(self.active_paragraph)
-        for _ in range(self.aug_rate):
-            aug_par = self._create_augmented_pos_paragraph()
-            par_list.append(aug_par)
+        if self.active_question.is_impossible is False:
+            for _ in range(self.aug_rate):
+                aug_par = self._create_augmented_pos_paragraph()
+                par_list.append(aug_par)
         random.shuffle(par_list)
         return par_list
 
     def _set_next_active_article(self):
         if self.active_article == self.children[-1]:
             self.end_epoch = True
+            return
         self.active_article_idx += 1
         self.active_article = self.children[self.active_article_idx]
 
     def _set_next_active_paragraph(self):
-        if self.active_paragraph == self.active_article[-1]:
+        if self.end_epoch is True:
+            return
+        elif self.active_paragraph == self.active_article[-1]:
             self._set_next_active_article()
             self.active_paragraph_idx = -1
             self.active_paragraph = None
@@ -105,17 +111,22 @@ class DataGenerator(object):
             self.active_paragraph = self.active_article[self.active_paragraph_idx]
 
     def _set_next_active_question(self):
-        if self.active_question == self.active_paragraph[-1]:
+        if self.end_epoch is True:
+            return
+        elif self.active_question == self.active_paragraph[-1]:
             self._set_next_active_paragraph()
             self.active_question_idx = -1
             self.active_question = None
             self._set_next_active_question()
-            self._set_paragraph_list()
+            # self._set_paragraph_list()
         else:
             self.active_question_idx += 1
             self.active_question = self.active_paragraph[self.active_question_idx]
+            self._set_paragraph_list()
 
     def _set_paragraph_list(self):
+        if self.end_epoch is True:
+            return
         par_list = self.active_article.children.copy()
         self.paragraph_list = self._create_paragraph_list(par_list)
 
@@ -129,6 +140,8 @@ class DataGenerator(object):
         test_len = int(test_size * len(self.children))
         train.children = self.children[test_len:]
         test.children = self.children[:test_len]
+        train._init_iter()
+        test._init_iter()
         return train, test
 
     def read_json(self, fname):
@@ -205,18 +218,20 @@ class DataGenerator(object):
     def _get_batch(self):
         X_batch = []
         y_batch = []
+        self.count += 1
         for _ in range(self.batch_size):
             X, y = self._get_next_datapoint()
             X_batch.append(X)
             y_batch.append(y)
             self._update_iter()
-            if self.end_epoch:
-                # TODO
+            if self.end_epoch is True:
+                print(f"ACTUAL BATCH COUNT: {self.count}")
+                self._on_epoch_end()
                 break
         return np.array(X_batch), np.array(y_batch)
 
     
-    def on_epoch_end(self):
+    def _on_epoch_end(self):
         random.shuffle(self.children)
         for article in self.children:
             random.shuffle(article.children)
