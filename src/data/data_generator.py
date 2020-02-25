@@ -114,7 +114,7 @@ class DataGenerator(object):
 
                 for question in paragraph["qas"]:
                     question_node = Node(data=question["question"], parent=paragraph_node,
-                                         data_type="question", is_impossible=question["is_impossible"])
+                                         data_type="question", is_impossible=False)
                     paragraph_node.children.append(question_node)
 
         self.data_size = self._get_data_size()
@@ -170,7 +170,10 @@ class DataGenerator(object):
                        ID=self.active_paragraph.id, data_type=self.active_paragraph.type, is_impossible=self.active_paragraph.is_impossible)
         if self.shuffle:
             random.shuffle(aug_par.data)
-        # TODO add noise
+        for i, sent in enumerate(aug_par.data):
+            noise = np.random.normal(0, self.data_noise, len(sent))
+            sent = sent + noise
+            aug_par.data[i] = np.clip(sent, a_min=-1., a_max=1.).tolist()
         return aug_par
 
     def _create_paragraph_list(self, par_list):
@@ -261,7 +264,7 @@ class DataGenerator(object):
             if self.end_epoch is True:
                 self._on_epoch_end()
                 break
-        return np.array([X_question_batch, X_paragraph_batch]), np.array(y_batch)
+        return [np.array(X_question_batch), np.array(X_paragraph_batch)], y_batch
 
     def _on_epoch_end(self):
         random.shuffle(self.children)
@@ -271,8 +274,8 @@ class DataGenerator(object):
 
     def _get_next_datapoint(self):
         current_par = self.paragraph_list[self.PAR_LIST_IDX]
-        X_question = np.array(np.array(self.active_question.data))
-        X_paragraph = np.array(current_par.data)
+        X_question = self.active_question.data
+        X_paragraph = np.average(current_par.data, axis=0).tolist()
         y = int((self.active_paragraph.id == current_par.id)
                 and (self.active_question.is_impossible is False))
         return (X_question, X_paragraph, y)
