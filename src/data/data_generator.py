@@ -130,6 +130,8 @@ class DataGenerator(object):
         test_len = int(test_size * len(self.children))
         train.children = self.children[test_len:]
         test.children = self.children[:test_len]
+        train.data_size = train._get_data_size()
+        test.data_size = test._get_data_size()
         train._init_iter()
         test._init_iter()
         return train, test
@@ -148,6 +150,7 @@ class DataGenerator(object):
             transform_child_data(child)
 
     def _init_iter(self):
+        self.end_epoch = False
         self.active_article_idx = -1
         self.active_paragraph_idx = -1
         self.active_question_idx = -1
@@ -264,7 +267,12 @@ class DataGenerator(object):
             if self.end_epoch is True:
                 self._on_epoch_end()
                 break
-        return [np.array(X_question_batch), np.array(X_paragraph_batch)], y_batch
+
+        X_question_batch = np.array(X_question_batch)
+        X_paragraph_batch = tf.keras.preprocessing.sequence.pad_sequences(X_paragraph_batch, maxlen=40, dtype='float32', padding='post')
+        y_batch = np.array(y_batch)
+        
+        return (X_question_batch, X_paragraph_batch), y_batch
 
     def _on_epoch_end(self):
         random.shuffle(self.children)
@@ -275,7 +283,7 @@ class DataGenerator(object):
     def _get_next_datapoint(self):
         current_par = self.paragraph_list[self.PAR_LIST_IDX]
         X_question = self.active_question.data
-        X_paragraph = np.average(current_par.data, axis=0).tolist()
+        X_paragraph = current_par.data
         y = int((self.active_paragraph.id == current_par.id)
                 and (self.active_question.is_impossible is False))
         return (X_question, X_paragraph, y)
