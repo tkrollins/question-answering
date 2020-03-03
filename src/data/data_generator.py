@@ -27,7 +27,7 @@ class Node(object):
 
 class DataGenerator(object):
 
-    def __init__(self, fname=None, sqaud=False, batch_size=1200, neg_rate=1., pos_aug=0, noise=0., shuffle=True):
+    def __init__(self, fname=None, sqaud=False, batch_size=1200, neg_rate=1., pos_aug=0, noise=0.05, shuffle=True, pos_weight=1, text_data=False):
         assert int(pos_aug) >= 0
         assert noise >= 0 and noise < 1
         assert neg_rate > 0 and neg_rate <= 1
@@ -42,6 +42,8 @@ class DataGenerator(object):
         self.neg_sample_rate = neg_rate
         self.end_epoch = False
         self.count = 0
+        self.pos_sample_weight = pos_weight
+        self.text_data = text_data
         random.seed()
 
         if fname is not None:
@@ -267,12 +269,13 @@ class DataGenerator(object):
             if self.end_epoch is True:
                 self._on_epoch_end()
                 break
-
-        X_question_batch = np.array(X_question_batch)
-        X_paragraph_batch = tf.keras.preprocessing.sequence.pad_sequences(X_paragraph_batch, maxlen=40, dtype='float32', padding='post')
+        if self.text_data is False:
+            X_question_batch = np.array(X_question_batch)
+            X_paragraph_batch = tf.keras.preprocessing.sequence.pad_sequences(X_paragraph_batch, maxlen=40, dtype='float32', padding='post')
         y_batch = np.array(y_batch)
+        sample_weights = (y_batch * (self.pos_sample_weight - 1)) + 1
         
-        return (X_question_batch, X_paragraph_batch), y_batch
+        return (X_question_batch, X_paragraph_batch), y_batch, sample_weights
 
     def _on_epoch_end(self):
         random.shuffle(self.children)
