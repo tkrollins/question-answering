@@ -2,13 +2,14 @@ import tensorflow as tf
 import numpy as np
 from data_generator import DataGenerator
 import argparse as ap
+from AttentionLayer import Attention
 
 
 parser = ap.ArgumentParser()
 parser.add_argument('--train_data', type=str, default="data/interim/SQuAD-v1.1-train_sBERT_embeddings-T.json")
 parser.add_argument('--val_data', type=str, default="data/interim/SQuAD-v1.1-train_sBERT_embeddings-D.json")
 parser.add_argument('--checkpoint', type=str, default="data/saved_models/att_model_1")
-parser.add_argument('--dropout', type=float, default=0.5)
+parser.add_argument('--dropout', type=float, default=0.4)
 parser.add_argument('--batch_size', type=int, default=500)
 parser.add_argument('--pos_noise', type=float, default=0.03)
 parser.add_argument('--learn_rate', type=float, default=0.001)
@@ -22,6 +23,8 @@ args = parser.parse_args()
 
 q_input = tf.keras.layers.Input(shape=(768), name="Question_Input")
 p_input = tf.keras.layers.Input(shape=(40,768), name="Paragraph_Input")
+ent_input = tf.keras.layers.Input(shape=(40,1), name="Entity_Score_Input")
+root_input = tf.keras.layers.Input(shape=(40,1), name="Root_Score_input")
 
 q = tf.keras.layers.GaussianNoise(args.question_noise)(q_input)
 
@@ -29,37 +32,40 @@ q = tf.keras.backend.l2_normalize(q, axis=1)
 p = tf.keras.backend.l2_normalize(p_input, axis=2)
 
 q = tf.keras.layers.Reshape((1,768))(q)
-q = tf.keras.layers.Masking(mask_value=100., name="Question_Masking")(q)
+q = tf.keras.layers.Masking(mask_value=-100., name="Question_Masking")(q)
 p = tf.keras.layers.Masking(mask_value=0., name="Paragraph_Masking")(p)
+ent = tf.keras.layers.Masking(mask_value=0., name="Entity_Masking")(ent_input)
+root = tf.keras.layers.Masking(mask_value=0., name="Root_Masking")(root_input)
 
-ATT_ENCODER = tf.keras.layers.Dense(768, activation='tanh', input_shape=(768,), name="Attention_Encoder")
-
-q = ATT_ENCODER(q)
-p = ATT_ENCODER(p)
-
-q = tf.keras.layers.Dropout(args.dropout)(q)
-p = tf.keras.layers.Dropout(args.dropout)(p)
-
-p = tf.keras.layers.Attention(name="Query-Question_Value-Paragraphs", use_scale=True)([q, p])
+p, scores = Attention(name="Query-Question_Value-Paragraphs", use_scale=True)([q, p])
+# scores = tf.where( tf.equal( 0., scores ), -np.inf * tf.ones_like( scores ), scores )
+distribution = tf.nn.softmax(scores)
 
 q = tf.keras.backend.squeeze(q, axis=1)
 p = tf.keras.backend.squeeze(p, axis=1)
 
-# AFTER_ATT_ENCODER = tf.keras.layers.Dense(768, activation='tanh', input_shape=(768,), name="Paragraph_Encoder")
+similarity = tf.keras.layers.dot([q, p], axes=1, normalize=True)
+# similarity = tf.keras.layers.Lambda(lambda x: (x + 1) / 2)(similarity)
 
-# q = AFTER_ATT_ENCODER(q)
-# p = AFTER_ATT_ENCODER(p)
+# temp = tf.keras.backend.placeholder(shape=(None, 1, 1))
+# temp = ent[:,0,:]
+# ent, _ = Attention(name="Entity_Attention", scores=scores)([temp, ent])
+# root, _ = Attention(name="Root_Attention", scores=scores)([temp, root])
 
-pred = tf.keras.layers.dot([q, p], axes=1, normalize=True)
+ent = tf.matmul(distribution, ent)
+root = tf.matmul(distribution, root)
+ent = tf.keras.backend.squeeze(ent, axis=1)
+root = tf.keras.backend.squeeze(root, axis=1)
 
-pred = tf.keras.layers.Lambda(lambda x: (x + 1) / 2)(pred)
+combined = tf.keras.layers.Concatenate()([similarity, ent, root])
+
+pred = tf.keras.layers.Dense(1, activation='sigmoid', input_shape=(3,), name="Output", use_bias=True)(combined)
 
 
-model = tf.keras.Model(inputs=[q_input, p_input], outputs=pred)
+model = tf.keras.Model(inputs=[q_input, p_input, ent_input, root_input], outputs=pred)
 
 THRES = 0.5
 METRICS = [
-      tf.keras.metrics.RootMeanSquaredError(name='rmse'),
       tf.keras.metrics.Precision(name='precision', thresholds=THRES),
       tf.keras.metrics.Recall(name='recall', thresholds=THRES),
       tf.keras.metrics.TruePositives(name='tp', thresholds=THRES),
@@ -69,11 +75,11 @@ METRICS = [
       tf.keras.metrics.BinaryAccuracy(name='accuracy', threshold=THRES),
 ]
 
-model.compile(loss=tf.keras.losses.MeanSquaredError(),
+model.compile(loss=tf.keras.losses.BinaryCrossentropy(),
               optimizer=tf.keras.optimizers.Adam(learning_rate=args.learn_rate), metrics=METRICS)
+model.run_eagerly = True
 
 model.summary()
-
 tf.keras.utils.plot_model(model, show_shapes=True)
 
 
@@ -93,3 +99,4 @@ stopping = tf.keras.callbacks.EarlyStopping(patience=args.early_stopping, verbos
 
 model.fit(x=data_gen(train_data), epochs=args.epochs, verbose=1, validation_data=data_gen(
     val_data), steps_per_epoch=len(train_data), validation_steps=len(val_data), callbacks=[ckpt, stopping])
+

@@ -1,5 +1,5 @@
 import tensorflow as tf
-from data_generator import DataGenerator, Node
+from data_generator import DataGenerator, Node, SentenceScorer
 import numpy as np
 from collections import defaultdict
 import pandas as pd
@@ -8,7 +8,7 @@ import argparse as ap
 
 
 parser = ap.ArgumentParser()
-parser.add_argument('--data', type=str, default="/Users/tkrollins/OneDrive/Courses/capstone/question-answering/data/interim/SQuAD-v1.1-dev_sBERT_embeddings.json")
+parser.add_argument('--data', type=str, default="/Users/tkrollins/OneDrive/Courses/capstone/question-answering/data/interim/SQuAD-v1.1-train_sBERT_ent-root_embeddings-D.json")
 parser.add_argument('--model', type=str, default="/Users/tkrollins/OneDrive/Courses/capstone/question-answering/data/saved_models/att_model-best")
 parser.add_argument('--output', type=str, default="results.csv")
 parser.add_argument('--top_n', type=int, default=5)
@@ -24,12 +24,33 @@ class ParagraphPredictor(object):
 
     def ask_question(self):
         for article in self.articles:
-            article_data = np.array([par.data for par in article])
-            article_data = tf.keras.preprocessing.sequence.pad_sequences(
-                article_data, maxlen=40, dtype='float32', padding='post')
+            article_emb = np.array([par.data['embedding'] for par in article])
+            article_emb = tf.keras.preprocessing.sequence.pad_sequences(
+                article_emb, maxlen=40, dtype='float32', padding='post')
+            article_ents = [par.data['ents'] for par in article]
+            article_roots = [par.data['roots'] for par in article]
             for p_id, paragraph in enumerate(article):
-                for question in paragraph:
-                    yield (np.array([question.data] * len(article_data)), article_data, article.id, p_id)
+                for q in paragraph:
+                    q_emb = q.data['embedding']
+                    article_ent_scores = []
+                    article_root_scores = []
+                    for p_ents, p_roots in zip(article_ents, article_roots):
+                        ent_score, root_score = self._get_ent_root_scores(q.data['ents'], q.data['roots'], p_ents, p_roots)
+                        article_ent_scores.append(ent_score)
+                        article_root_scores.append(root_score)
+                    article_ent_scores = tf.keras.preprocessing.sequence.pad_sequences(article_ent_scores, maxlen=40, dtype='float32', padding='post', value=0.).reshape((len(article_ent_scores), 40, 1))
+                    article_root_scores = tf.keras.preprocessing.sequence.pad_sequences(article_root_scores, maxlen=40, dtype='float32', padding='post', value=0.).reshape((len(article_root_scores), 40, 1))
+                    yield (np.array([q_emb] * len(article_emb)), article_emb, article_ent_scores, article_root_scores, article.id, p_id)
+
+    @staticmethod
+    def _get_ent_root_scores(q_ents, q_roots, p_ents, p_roots):
+        ent_scores = []
+        root_scores = []
+        for ent, root in zip(p_ents, p_roots):
+            ent_score, root_score = SentenceScorer(q_ents, q_roots, ent, root).score()
+            ent_scores.append(ent_score)
+            root_scores.append(root_score)
+        return ent_scores, root_scores
 
     @staticmethod
     def _get_results_dict():
@@ -50,7 +71,7 @@ class ParagraphPredictor(object):
         results = self._get_results_dict()
         prev_aid = self.articles[0].id
         article_count = 0
-        for question, article, article_id, answer in self.ask_question():
+        for question, article, ents, roots, article_id, answer in self.ask_question():
             if article_id != prev_aid:
                 assert len(results) == 10
                 length = len(results["correct"])
@@ -59,7 +80,6 @@ class ParagraphPredictor(object):
                 results_df = pd.DataFrame(results)
                 assert results_df.shape[1] == 10
                 assert results_df.shape[0] == length
-                print("Writing to CSV...")
                 if not os.path.isfile(fname):
                     print(f"Creating  {fname}...")
                     results_df.to_csv(fname, header='column_names')
@@ -71,7 +91,7 @@ class ParagraphPredictor(object):
                 results = self._get_results_dict()
                 prev_aid = article_id
             
-            pred_scores = self.model.predict((question, article)).flatten()
+            pred_scores = self.model.predict((question, article, ents, roots)).flatten()
             pred_par = np.argmax(pred_scores)
             results["top_par_pred_score"].append(pred_scores[pred_par])
             results["answer_par_pred_score"].append(pred_scores[answer])
@@ -102,7 +122,6 @@ class ParagraphPredictor(object):
         results_df = pd.DataFrame(results)
         assert results_df.shape[1] == 10
         assert results_df.shape[0] == length
-        print("Writing to CSV...")
         if not os.path.isfile(fname):
             print(f"Creating  {fname}...")
             results_df.to_csv(fname, header='column_names')

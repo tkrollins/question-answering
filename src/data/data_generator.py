@@ -7,8 +7,42 @@ import random
 import tensorflow as tf
 import spacy
 import bert
+from sklearn.preprocessing import MinMaxScaler
+from fuzzywuzzy import fuzz, process
 
+class SentenceScorer(object):
+    def __init__(self, q_ents, q_roots, a_ents, a_roots):
+        self.q_ents = q_ents
+        self.q_roots = q_roots
+        self.a_ents = a_ents
+        self.a_roots = a_roots
 
+    @staticmethod
+    def _score_named_entities(q_ents, a_ents):
+        score = 0
+        if len(q_ents) < 1 or len(a_ents) < 1:
+            return score
+        for q in q_ents:
+            best_ent_score = process.extract(q, a_ents, limit=1, scorer=fuzz.partial_ratio)
+            score += best_ent_score[0][1]
+        score = score / (100 * len(q_ents))
+        return score
+
+    @staticmethod
+    def _score_roots(q_roots, a_roots):
+        score = 0
+        if len(q_roots) < 1 or len(a_roots) < 1:
+            return score
+        for q in q_roots:
+            if q in set(a_roots):
+                score += 1
+        score /= len(q_roots)
+        return score
+
+    def score(self):
+        ent_score = self._score_named_entities(self.q_ents, self.a_ents)
+        root_score = self._score_roots(self.q_roots, self.a_roots)
+        return (ent_score, root_score)
 class Node(object):
     def __init__(self, data=None, parent=None, children=[], ID=None, data_type=None, is_impossible=None):
         self.id = ID
@@ -56,7 +90,7 @@ class DataGenerator(object):
         return int(np.ceil(self.data_size / self.batch_size))
 
     def __getitem__(self, idx):
-        return self._get_batch()
+        return self._get_batch_feat()
 
     def read_json(self, fname):
         def dict_to_node(child_dict, parent_node=None):
@@ -109,7 +143,7 @@ class DataGenerator(object):
                 clean_paragraph = bert.albert_tokenization.preprocess_text(
                     paragraph["context"])
                 nlp_text = nlp(clean_paragraph)
-                paragraph_data = [sent.text for sent in nlp_text.sents]
+                paragraph_data = [sent.text for sent in nlp_text.sents if len(sent.text) > 5]
                 paragraph_node = Node(
                     data=paragraph_data, parent=article_node, ID=p_id, data_type="paragraph")
                 article_node.children.append(paragraph_node)
@@ -142,8 +176,8 @@ class DataGenerator(object):
         def transform_child_data(node, trans_func=transform_func):
             if node.data is not None:
                 node.data = trans_func(node.data)
-                if node.type == "question":
-                    node.data = node.data[0]
+                # if node.type == "question":
+                #     node.data = node.data[0]
             for child in node.children:
                 transform_child_data(child)
 
@@ -173,12 +207,13 @@ class DataGenerator(object):
         data_copy = self.active_paragraph.data.copy()
         aug_par = Node(data=data_copy, parent=self.active_paragraph.parent, children=self.active_paragraph.children,
                        ID=self.active_paragraph.id, data_type=self.active_paragraph.type, is_impossible=self.active_paragraph.is_impossible)
-        if self.shuffle:
-            random.shuffle(aug_par.data)
-        for i, sent in enumerate(aug_par.data):
+        # if self.shuffle:
+        #     random.shuffle(aug_par.data)
+        for i, sent in enumerate(aug_par.data['embedding']):
             noise = np.random.normal(0, self.data_noise, len(sent))
             sent = sent + noise
-            aug_par.data[i] = np.clip(sent, a_min=-1., a_max=1.).tolist()
+            # aug_par.data[i] = np.clip(sent, a_min=-1., a_max=1.).tolist()
+            aug_par.data[i] = sent
         return aug_par
 
     def _create_paragraph_list(self, par_list):
@@ -277,6 +312,35 @@ class DataGenerator(object):
         
         return (X_question_batch, X_paragraph_batch), y_batch, sample_weights
 
+    def _get_batch_feat(self):
+        question_batch = []
+        paragraph_batch = []
+        ent_score_batch = []
+        root_score_batch = []
+        y_batch = []
+        self.count += 1
+        for _ in range(self.batch_size):
+            q_emb, p_emb, ent_score, root_score, y = self._get_next_datapoint_feat()
+            question_batch.append(q_emb)
+            paragraph_batch.append(p_emb)
+            ent_score_batch.append(ent_score)
+            root_score_batch.append(root_score)
+            y_batch.append(y)
+            self._update_iter()
+            if self.end_epoch is True:
+                self._on_epoch_end()
+                break
+
+        question_batch = np.array(question_batch)
+        paragraph_batch = tf.keras.preprocessing.sequence.pad_sequences(paragraph_batch, maxlen=40, dtype='float32', padding='post', value=0.)
+        ent_score_batch = tf.keras.preprocessing.sequence.pad_sequences(ent_score_batch, maxlen=40, dtype='float32', padding='post', value=0.).reshape((len(ent_score_batch), 40, 1))
+        root_score_batch = tf.keras.preprocessing.sequence.pad_sequences(root_score_batch, maxlen=40, dtype='float32', padding='post', value=0.).reshape((len(root_score_batch), 40, 1))
+
+        y_batch = np.array(y_batch)
+        sample_weights = (y_batch * (self.pos_sample_weight - 1)) + 1
+        
+        return [question_batch, paragraph_batch, ent_score_batch, root_score_batch], y_batch, sample_weights
+
     def _on_epoch_end(self):
         random.shuffle(self.children)
         for article in self.children:
@@ -290,6 +354,27 @@ class DataGenerator(object):
         y = int((self.active_paragraph.id == current_par.id)
                 and (self.active_question.is_impossible is False))
         return (X_question, X_paragraph, y)
+
+    def _get_next_datapoint_feat(self):
+        current_par = self.paragraph_list[self.PAR_LIST_IDX]
+        q_emb = self.active_question.data['embedding']
+        p_emb = current_par.data['embedding']
+
+        q_ents = self.active_question.data['ents']
+        q_roots = self.active_question.data['roots']
+        p_ents = current_par.data['ents']
+        p_roots = current_par.data['roots']
+        
+        ent_scores = []
+        root_scores = []
+        for ent, root in zip(p_ents, p_roots):
+            ent_score, root_score = SentenceScorer(q_ents, q_roots, ent, root).score()
+            ent_scores.append(ent_score)
+            root_scores.append(root_score)
+        assert len(ent_scores) == len(root_scores) == len(p_emb)
+        y = int((self.active_paragraph.id == current_par.id)
+                and (self.active_question.is_impossible is False))
+        return (q_emb, p_emb, ent_scores, root_scores, y)
 
     def _update_iter(self):
         self.PAR_LIST_IDX += 1
