@@ -1,7 +1,7 @@
-Q-A_code
+Context-Finder
 ==============================
 
-A short description of the project.
+Context-Finder is a proposed model which takes a text document of variable sized contexts (paragraphs) and scores each context with the probability in which it will contain the answer to a given question.  It then aggregates these scores to find the most likely answer-containing context given the question. The Stanford Question Answering Dataset (SQuAD) was used for training and evaluation of the model.  As opposed to most models using SQuAD, rather than predicting an answer-containing span given a context, Context-Finder predicts an answer-containing context given a document.  As input features, the model utilizes Sentence-BERT sentence embeddings as well as a score for both named entities and verb roots of both the question and context text.  The model is comprised of dot product attention mechanisms as well as a feed-forward neural network.  Its performance was subsequently compared against the DrQA Document Reader, an established model with a similar objective, after both were trained using the same data.  Context-Finder achieved an exact context prediction accuracy within 1% of the DrQA Document reader.  Context-Finder achieves this while eliminating the use of recurrent neural networks and token-level embeddings, which can significantly improve performance.  Additionally, the correct context was found within the top five scoring candidates of document more than 83% of the time.
 
 Project Organization
 ------------
