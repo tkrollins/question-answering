@@ -60,7 +60,7 @@ tensorflow-hub==0.7.0
 termcolor==1.1.0
 thinc==7.0.8
 tqdm==4.42.1
-urllib3==1.25.7
+urllib3==1.25.8
 virtualenv==16.7.9
 virtualenv-clone==0.5.3
 wasabi==0.6.0
