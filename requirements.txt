@@ -37,7 +37,7 @@ pandas==1.0.0
 pipenv==2018.11.26
 plac==0.9.6
 preshed==2.0.1
-protobuf==3.11.2
+protobuf==3.18.3
 pycodestyle==2.5.0
 pycparser==2.19
 pylint==2.4.4
